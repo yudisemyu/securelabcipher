@@ -20,10 +20,10 @@ const App = () => {
   const [operationMode, setOperationMode] = useState('encrypt'); 
 
   // State Data
-  const [key, setKey] = useState('SecretKey123456');
+  const [key, setKey] = useState('MySecretKey12345');
   const [algorithm, setAlgorithm] = useState('custom');
   
-  const [plainInput, setPlainInput] = useState('Hello World 1234');
+  const [plainInput, setPlainInput] = useState('Hello World');
   const [cipherOutput, setCipherOutput] = useState('');
   
   const [cipherInput, setCipherInput] = useState('');
@@ -112,12 +112,10 @@ const App = () => {
     });
   };
 
-  // FIX: Menambahkan delay buatan dan state loading agar terasa ada proses
   const verifySBoxStrength = async () => {
     setIsVerifying(true);
-    setVerificationStats(null); // Reset dulu biar terlihat refresh
+    setVerificationStats(null); 
 
-    // Simulasi delay sedikit agar UI sempat render loading state
     await new Promise(resolve => setTimeout(resolve, 600));
 
     const sacValue = calculateSAC(currentSBox);
@@ -215,13 +213,12 @@ const App = () => {
                     <Input 
                       value={key} 
                       onChange={(e) => setKey(e.target.value)}
-                      maxLength={32} // Dilonggarkan max length nya
+                      maxLength={32} 
                       className="pl-10 font-mono tracking-wide"
                       placeholder="Enter any key..."
                     />
                   </div>
                   
-                  {/* FIX: Feedback UI untuk key length yang lebih ramah */}
                   <div className="flex justify-between px-1 items-center">
                     <span className="text-[10px] text-zinc-400">ECB Mode</span>
                     {key.length === 16 ? (
@@ -255,7 +252,6 @@ const App = () => {
               </div>
             </div>
 
-            {/* Right Column: Main Action Area */}
             <div className="md:col-span-8 space-y-6">
               
               <div className="flex bg-zinc-200/50 p-1 rounded-2xl gap-1">
@@ -300,7 +296,6 @@ const App = () => {
                       />
                     </div>
 
-                    {/* FIX: Disabled condition hanya cek keberadaan key dan input */}
                     <Button onClick={handleEncrypt} className="w-full py-4 text-base shadow-indigo-200" disabled={!key || !plainInput}>
                       <Lock className="w-5 h-5" /> Encrypt Message
                     </Button>
@@ -401,7 +396,6 @@ const App = () => {
                       Real-time Strength Verification
                     </h3>
                     
-                    {/* FIX: Tombol Verify dengan Loading State */}
                     <Button 
                         onClick={verifySBoxStrength} 
                         variant="outline" 
@@ -435,7 +429,6 @@ const App = () => {
                     <div className="flex justify-between items-center mb-2">
                       <span className="text-sm font-medium text-zinc-600">Strict Avalanche (SAC)</span>
                       
-                      {/* FIX: Tampilan Stats lebih responsif */}
                       {isVerifying ? (
                           <span className="text-xs text-indigo-500 animate-pulse font-medium">Computing...</span>
                       ) : verificationStats ? (
