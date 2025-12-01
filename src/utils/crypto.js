@@ -296,3 +296,106 @@ export const calculateSAC = (sbox) => {
   // Idealnya mendekati 0.5 (50%)
   return totalPropabilitySum / (totalInputs * inputBits * outputBits);
 };
+
+export const AFFINE_MATRIX_K44 = [
+  [0, 1, 1, 1, 0, 1, 0, 1], // Row 1
+  [1, 0, 1, 1, 1, 0, 1, 0], // Row 2
+  [0, 1, 0, 1, 1, 1, 0, 1], // Row 3
+  [1, 0, 1, 0, 1, 1, 1, 0], // Row 4
+  [0, 0, 0, 0, 0, 1, 1, 1], // Row 5
+  [0, 1, 0, 1, 0, 1, 1, 1], // Row 6
+  [1, 0, 0, 0, 0, 0, 1, 1], // Row 7
+  [1, 0, 1, 0, 1, 0, 1, 1], // Row 8
+];
+
+// Matriks Identitas untuk AES (Affine standar AES)
+export const AFFINE_MATRIX_AES = [
+  [1, 0, 0, 0, 1, 1, 1, 1],
+  [1, 1, 0, 0, 0, 1, 1, 1],
+  [1, 1, 1, 0, 0, 0, 1, 1],
+  [1, 1, 1, 1, 0, 0, 0, 1],
+  [1, 1, 1, 1, 1, 0, 0, 0],
+  [0, 1, 1, 1, 1, 1, 0, 0],
+  [0, 0, 1, 1, 1, 1, 1, 0],
+  [0, 0, 0, 1, 1, 1, 1, 1],
+];
+
+// === ADVANCED CRYPTANALYSIS ===
+
+// Hitung Dot Product bit (Parity)
+const parity = (n) => {
+  let count = 0;
+  while (n) {
+    count += n & 1;
+    n >>= 1;
+  }
+  return count % 2;
+};
+
+// 1. Calculate Differential Approximation Probability (DAP)
+// Paper Standard: Ideal AES/Sbox44 DAP = 0.015625 (4/256)
+export const calculateDAP = (sbox) => {
+  let maxDiffProb = 0;
+  const size = 256;
+
+  // Loop semua input difference (delta X)
+  for (let dx = 1; dx < size; dx++) {
+    const diffCounts = new Array(size).fill(0);
+
+    // Loop semua kemungkinan input X
+    for (let x = 0; x < size; x++) {
+      const y1 = sbox[x >> 4][x & 0x0f];
+      const y2 = sbox[(x ^ dx) >> 4][(x ^ dx) & 0x0f];
+      const dy = y1 ^ y2; // Output difference
+      diffCounts[dy]++;
+    }
+
+    // Cari frekuensi kemunculan difference tertinggi untuk input dx ini
+    const maxCountForDx = Math.max(...diffCounts);
+    if (maxCountForDx > maxDiffProb) {
+      maxDiffProb = maxCountForDx;
+    }
+  }
+
+  return maxDiffProb / size; // Mengembalikan probabilitas (e.g., 4/256)
+};
+
+// 2. Calculate Linear Approximation Probability (LAP)
+// Paper Standard: Ideal AES/Sbox44 LAP = 0.0625
+export const calculateLAP = (sbox) => {
+  let maxBias = 0;
+  const size = 256;
+
+  // Mask Input (alpha) dan Mask Output (beta)
+  // Loop alpha dari 1 sampai 255
+  for (let alpha = 1; alpha < size; alpha++) {
+    for (let beta = 1; beta < size; beta++) {
+      let countMatches = 0;
+
+      for (let x = 0; x < size; x++) {
+        const y = sbox[x >> 4][x & 0x0f];
+
+        // Linear equation: alpha • x = beta • S(x)
+        const inputParity = parity(x & alpha);
+        const outputParity = parity(y & beta);
+
+        if (inputParity === outputParity) {
+          countMatches++;
+        }
+      }
+
+      // Bias = |Probability - 0.5|
+      const probability = countMatches / size;
+      const bias = Math.abs(probability - 0.5);
+
+      if (bias > maxBias) {
+        maxBias = bias;
+      }
+    }
+  }
+
+  return maxBias;
+};
+
+// Helper: Ubah array sbox 2D ke 1D flat untuk keperluan analisis lain jika butuh
+export const flattenSBox = (sbox) => sbox.flat();

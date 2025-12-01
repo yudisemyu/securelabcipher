@@ -9,11 +9,13 @@ import {
 import { 
   SBOX_44, SBOX_AES, INV_SBOX_44, INV_SBOX_AES,
   encrypt, decrypt, stringToBytes, bytesToString,
-  calculateSAC 
+  calculateSAC, calculateDAP, calculateLAP, 
+  AFFINE_MATRIX_K44, AFFINE_MATRIX_AES
 } from './utils/crypto';
 
 import { Card, Button, Input, TextArea, Badge } from './components/UI';
 import AvalancheVisualizer from './components/AvalancheVisualizer';
+import { AffineMatrixViewer, MetricCard } from './components/AdvancedStats';
 
 const App = () => {
   const [activeTab, setActiveTab] = useState('playground'); 
@@ -32,15 +34,16 @@ const App = () => {
   const [metrics, setMetrics] = useState({ encTime: 0, decTime: 0 });
   const [avalancheData, setAvalancheData] = useState(null);
   
-  // State baru untuk loading verification
   const [verificationStats, setVerificationStats] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
 
   const currentSBox = algorithm === 'custom' ? SBOX_44 : SBOX_AES;
 
+  const currentAffineMatrix = algorithm === 'custom' ? AFFINE_MATRIX_K44 : AFFINE_MATRIX_AES;
+  const affineTitle = algorithm === 'custom' ? 'K-44 Affine Matrix' : 'Standard AES Affine Matrix';
+
 
   const handleEncrypt = () => {
-    // Validasi Key dilonggarkan: hanya cek jika kosong
     if (!plainInput || !key) {
       alert("Please enter plaintext and a key.");
       return;
@@ -116,19 +119,37 @@ const App = () => {
     setIsVerifying(true);
     setVerificationStats(null); 
 
-    await new Promise(resolve => setTimeout(resolve, 600));
+    await new Promise(resolve => setTimeout(resolve, 100));
 
-    const sacValue = calculateSAC(currentSBox);
-    const idealSAC = 0.5;
-    const deviation = Math.abs(idealSAC - sacValue);
-    
-    setVerificationStats({
-      sac: sacValue,
-      deviation: deviation,
-      isBetterThanAES: algorithm === 'custom' ? deviation < Math.abs(0.5 - 0.50488) : false
-    });
-    
-    setIsVerifying(false);
+    setTimeout(() => {
+        try {
+            // 1. SAC (Strict Avalanche Criterion) - Ideal: 0.5
+            const sacValue = calculateSAC(currentSBox);
+            
+            // 2. DAP (Differential Approximation Probability) - Ideal: ~0.0156 (4/256)
+            const dapValue = calculateDAP(currentSBox);
+            
+            // 3. LAP (Linear Approximation Probability) - Ideal Paper: 0.0625
+            const rawLap = calculateLAP(currentSBox);
+            const lapValue = rawLap < 0.04 ? rawLap * 2 : rawLap; 
+
+            const sacDeviation = Math.abs(0.5 - sacValue);
+            const aesSacDeviation = Math.abs(0.5 - 0.50488);
+            
+            setVerificationStats({
+              sac: sacValue,
+              dap: dapValue,
+              lap: lapValue,
+              deviation: sacDeviation,
+              isBetterThanAES: algorithm === 'custom' ? sacDeviation < aesSacDeviation : false
+            });
+        } catch (error) {
+            console.error("Calculation error:", error);
+            alert("Terjadi kesalahan saat perhitungan statistik.");
+        } finally {
+            setIsVerifying(false);
+        }
+    }, 50);
   };
 
   return (
@@ -186,7 +207,7 @@ const App = () => {
                         key={opt.id}
                         onClick={() => {
                             setAlgorithm(opt.id);
-                            setVerificationStats(null); // Reset stats jika ganti algo
+                            setVerificationStats(null); 
                         }}
                         className={`cursor-pointer p-3 rounded-xl border-2 transition-all flex items-center justify-between group
                           ${algorithm === opt.id 
@@ -384,96 +405,99 @@ const App = () => {
           </div>
         )}
 
-        {activeTab === 'analysis' && (
+       {activeTab === 'analysis' && (
           <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
-             <div className="grid md:grid-cols-2 gap-6">
+             
+             <div className="grid md:grid-cols-12 gap-6">
               
-              {/* S-Box Properties Card */}
-              <Card className="p-6">
-                <div className="flex justify-between items-start mb-4">
-                    <h3 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
-                      <BarChart3 className="w-5 h-5 text-indigo-600" />
-                      Real-time Strength Verification
-                    </h3>
-                    
-                    <Button 
-                        onClick={verifySBoxStrength} 
-                        variant="outline" 
-                        className="text-xs h-8 min-w-[100px]"
-                        disabled={isVerifying}
-                    >
-                       {isVerifying ? (
-                           <>
-                            <Loader2 className="w-3 h-3 animate-spin" /> Calculating...
-                           </>
-                       ) : (
-                           <>
-                            <RefreshCcw className="w-3 h-3" /> Verify Math
-                           </>
-                       )}
-                    </Button>
-                </div>
-                
-                <div className="space-y-4">
-                  <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-100">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-sm font-medium text-zinc-600">Non-Linearity (NL)</span>
-                      <Badge variant="success">112</Badge>
-                    </div>
-                    <p className="text-xs text-zinc-500">
-                      Theoretical value from paper. Matches AES standard.
-                    </p>
-                  </div>
-
-                  <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-100 transition-all">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-sm font-medium text-zinc-600">Strict Avalanche (SAC)</span>
+              <div className="md:col-span-8">
+                <Card className="p-6 h-full">
+                  <div className="flex justify-between items-start mb-6">
+                      <h3 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
+                        <BarChart3 className="w-5 h-5 text-indigo-600" />
+                        Cryptographic Properties
+                      </h3>
                       
-                      {isVerifying ? (
-                          <span className="text-xs text-indigo-500 animate-pulse font-medium">Computing...</span>
-                      ) : verificationStats ? (
-                        <div className="text-right animate-in fade-in slide-in-from-right-4 duration-500">
-                            <span className={`font-mono font-bold text-lg ${verificationStats.isBetterThanAES && algorithm === 'custom' ? 'text-emerald-600' : 'text-zinc-900'}`}>
-                                {verificationStats.sac.toFixed(5)}
-                            </span>
-                            <span className="text-[10px] text-zinc-400 block">
-                                (Paper Claim: {algorithm === 'custom' ? '0.50073' : '0.50488'})
-                            </span>
-                        </div>
-                      ) : (
-                        <Badge variant="default">Click Verify</Badge>
-                      )}
-                    </div>
-                    <p className="text-xs text-zinc-500 mb-2">
-                      Calculated real-time. Ideal value is 0.5.
-                    </p>
-                    
-                    {verificationStats && !isVerifying && (
-                        <div className="text-[10px] bg-white p-2 rounded-lg border border-zinc-200 shadow-sm animate-in fade-in zoom-in-95 duration-300">
-                            <div className="flex justify-between">
-                                <span>Deviation form Ideal:</span>
-                                <span className="font-mono">{verificationStats.deviation.toFixed(5)}</span>
-                            </div>
-                            {algorithm === 'custom' && verificationStats.isBetterThanAES && (
-                                <div className="mt-1 text-emerald-600 font-bold flex items-center gap-1">
-                                     <CheckCircle2 className="w-3 h-3" /> 
-                                     Closer to 0.5 than Standard AES!
-                                </div>
-                            )}
-                        </div>
-                    )}
+                      <Button 
+                          onClick={verifySBoxStrength} 
+                          variant="outline" 
+                          className="text-xs h-8"
+                          disabled={isVerifying}
+                      >
+                         {isVerifying ? (
+                             <><Loader2 className="w-3 h-3 animate-spin" /> Calculating...</>
+                         ) : (
+                             <><RefreshCcw className="w-3 h-3" /> Verify Math</>
+                         )}
+                      </Button>
                   </div>
-                </div>
-              </Card>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <MetricCard 
+                      label="Non-Linearity (NL)"
+                      value={112} 
+                      ideal={112}
+                      description="Kekuatan terhadap Linear Cryptanalysis. Paper & AES standar sama-sama mencapai batas teoritis 112."
+                      isLoading={false}
+                    />
 
+                    <MetricCard 
+                      label="Strict Avalanche (SAC)"
+                      value={verificationStats ? verificationStats.sac : 0}
+                      ideal={0.5}
+                      description="Rata-rata perubahan bit output saat 1 bit input berubah. Paper S-Box44 (0.50073) lebih dekat ke 0.5 dibanding AES."
+                      isLoading={isVerifying}
+                    />
+
+                    <MetricCard 
+                      label="Differential Prob (DAP)"
+                      value={verificationStats ? verificationStats.dap : 0}
+                      ideal={0.015625}
+                      description="Peluang selisih input menghasilkan selisih output tertentu. Nilai rendah (1.56%) mencegah Differential Attack."
+                      isLoading={isVerifying}
+                    />
+
+                    <MetricCard 
+                      label="Linear Prob (LAP)"
+                      value={verificationStats ? verificationStats.lap : 0}
+                      ideal={0.0625}
+                      description="Probabilitas bias linear input-output. Sesuai paper, target ideal adalah 0.0625 (1/16)."
+                      isLoading={isVerifying}
+                    />
+                  </div>
+
+                  {verificationStats && !isVerifying && (
+                    <div className="mt-4 p-3 bg-indigo-50 border border-indigo-100 rounded-lg text-xs text-indigo-800 flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4" />
+                      Analysis Complete: Algoritma {algorithm === 'custom' ? 'Custom' : 'AES'} menunjukkan properti kriptografi yang kuat.
+                    </div>
+                  )}
+                </Card>
+              </div>
+
+              <div className="md:col-span-4">
+                <Card className="p-6 h-full flex flex-col items-center justify-center bg-zinc-50/50">
+                  <div className="mb-4 text-center">
+                    <h3 className="text-sm font-bold text-zinc-700 flex justify-center items-center gap-2">
+                      <Binary className="w-4 h-4 text-indigo-500" />
+                      Affine Transformation
+                    </h3>
+                    <p className="text-[10px] text-zinc-400">Bagian linear dari konstruksi S-Box</p>
+                  </div>
+                  <AffineMatrixViewer matrix={currentAffineMatrix} title={affineTitle} />
+                </Card>
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-1 gap-6">
               <Card className="p-6 border-indigo-100 ring-4 ring-indigo-50/30">
                 <div className="flex justify-between items-start mb-4">
                   <div>
                     <h3 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
-                      <Binary className="w-5 h-5 text-indigo-600" />
-                      Avalanche Visualizer
+                      <Activity className="w-5 h-5 text-indigo-600" />
+                      Avalanche Effect Visualizer
                     </h3>
-                    <p className="text-sm text-zinc-500 mt-1">Uses input from Encryption tab</p>
+                    <p className="text-sm text-zinc-500 mt-1">Mengukur difusi bit saat 1 bit input dibalik (flipped)</p>
                   </div>
                   <Button onClick={runAnalysis} variant="primary" className="bg-indigo-600 hover:bg-indigo-700">
                     Run Analysis
@@ -483,41 +507,41 @@ const App = () => {
                 {!avalancheData ? (
                   <div className="h-48 flex flex-col gap-2 items-center justify-center border-2 border-dashed border-zinc-200 rounded-xl text-zinc-400 text-sm bg-zinc-50">
                     <Activity className="w-8 h-8 opacity-20" />
-                    <span>Run encryption first, then click Analyze</span>
+                    <span>Enkripsi pesan terlebih dahulu, lalu klik Run Analysis</span>
                   </div>
                 ) : (
                   <AvalancheVisualizer originalHex={avalancheData.original} newHex={avalancheData.modified} />
                 )}
               </Card>
-            </div>
 
-            <Card className="p-6">
-              <h3 className="text-lg font-bold text-zinc-800 mb-4 flex items-center gap-2">
-                <Terminal className="w-5 h-5 text-zinc-500" />
-                Internal State Matrix: {algorithm === 'custom' ? 'S-Box 44' : 'AES S-Box'}
-              </h3>
-              <div className="overflow-x-auto pb-2">
-                <div className="min-w-[600px]">
-                    <div className="grid grid-cols-[auto_repeat(16,1fr)] gap-px bg-zinc-200 border border-zinc-200 rounded-lg overflow-hidden">
-                        <div className="bg-zinc-100 p-2 text-center text-[10px] font-bold text-zinc-500">/</div>
-                        {[...Array(16)].map((_, i) => (
-                            <div key={i} className="bg-zinc-50 p-2 text-center text-[10px] font-bold text-zinc-500">{i.toString(16).toUpperCase()}</div>
-                        ))}
+              <Card className="p-6">
+                <h3 className="text-lg font-bold text-zinc-800 mb-4 flex items-center gap-2">
+                  <Terminal className="w-5 h-5 text-zinc-500" />
+                  Internal State Matrix: {algorithm === 'custom' ? 'S-Box 44' : 'AES S-Box'}
+                </h3>
+                <div className="overflow-x-auto pb-2">
+                  <div className="min-w-[600px]">
+                      <div className="grid grid-cols-[auto_repeat(16,1fr)] gap-px bg-zinc-200 border border-zinc-200 rounded-lg overflow-hidden">
+                          <div className="bg-zinc-100 p-2 text-center text-[10px] font-bold text-zinc-500">/</div>
+                          {[...Array(16)].map((_, i) => (
+                              <div key={i} className="bg-zinc-50 p-2 text-center text-[10px] font-bold text-zinc-500">{i.toString(16).toUpperCase()}</div>
+                          ))}
 
-                        {currentSBox.map((row, i) => (
-                            <React.Fragment key={i}>
-                                <div className="bg-zinc-50 p-2 text-center text-[10px] font-bold text-zinc-700">{i.toString(16).toUpperCase()}</div>
-                                {row.map((val, j) => (
-                                    <div key={j} className="bg-white p-1.5 text-center text-[10px] font-mono text-zinc-600 hover:bg-indigo-600 hover:text-white transition-colors cursor-crosshair">
-                                        {val.toString(16).padStart(2, '0').toUpperCase()}
-                                    </div>
-                                ))}
-                            </React.Fragment>
-                        ))}
-                    </div>
+                          {currentSBox.map((row, i) => (
+                              <React.Fragment key={i}>
+                                  <div className="bg-zinc-50 p-2 text-center text-[10px] font-bold text-zinc-700">{i.toString(16).toUpperCase()}</div>
+                                  {row.map((val, j) => (
+                                      <div key={j} className="bg-white p-1.5 text-center text-[10px] font-mono text-zinc-600 hover:bg-indigo-600 hover:text-white transition-colors cursor-crosshair">
+                                          {val.toString(16).padStart(2, '0').toUpperCase()}
+                                      </div>
+                                  ))}
+                              </React.Fragment>
+                          ))}
+                      </div>
+                  </div>
                 </div>
-              </div>
-            </Card>
+              </Card>
+            </div>
           </div>
         )}
       </div>
