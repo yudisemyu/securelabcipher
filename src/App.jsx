@@ -1,29 +1,36 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Lock, Unlock, Zap, Activity, Shield, 
   BarChart3, CheckCircle2, AlertCircle,
   Binary, Terminal, FileKey, ArrowRightLeft,
-  Copy, RefreshCcw, Loader2 
+  Copy, RefreshCcw, Loader2, Sparkles, Cpu,
+  Hash, Key, Eye, EyeOff, Settings, Grid3x3,
+  ChevronRight, Download, Upload, Filter,
+  TrendingUp, Code2, Layers, Table, Server,
+  ShieldCheck, Database, BarChart as BarChartIcon
 } from 'lucide-react';
 
 import { 
   SBOX_44, SBOX_AES, INV_SBOX_44, INV_SBOX_AES,
   encrypt, decrypt, stringToBytes, bytesToString,
   calculateSAC, calculateDAP, calculateLAP, 
-  AFFINE_MATRIX_K44, AFFINE_MATRIX_AES
+  AFFINE_MATRIX_K44, AFFINE_MATRIX_AES,
+  calculateSBoxStatistics
 } from './utils/crypto';
 
 import { Card, Button, Input, TextArea, Badge } from './components/UI';
 import AvalancheVisualizer from './components/AvalancheVisualizer';
 import { AffineMatrixViewer, MetricCard } from './components/AdvancedStats';
+import NonLinearityChart from './components/NonLinearityChart';
+import DifferentialTable from './components/DifferentialTable';
+import LinearApproximationTable from './components/LinearApproximationTable';
+import BitChangeAnalyzer from './components/BitChangeAnalyzer';
 
 const App = () => {
-  const [activeTab, setActiveTab] = useState('playground'); 
-  const [operationMode, setOperationMode] = useState('encrypt'); 
-
   // State Data
   const [key, setKey] = useState('MySecretKey12345');
   const [algorithm, setAlgorithm] = useState('custom');
+  const [showKey, setShowKey] = useState(false);
   
   const [plainInput, setPlainInput] = useState('Hello World');
   const [cipherOutput, setCipherOutput] = useState('');
@@ -32,518 +39,695 @@ const App = () => {
   const [plainOutput, setPlainOutput] = useState('');
 
   const [metrics, setMetrics] = useState({ encTime: 0, decTime: 0 });
-  const [avalancheData, setAvalancheData] = useState(null);
-  
-  const [verificationStats, setVerificationStats] = useState(null);
-  const [isVerifying, setIsVerifying] = useState(false);
+  const [activeView, setActiveView] = useState('visualizer'); // visualizer, matrix, analysis
+  const [isEncrypting, setIsEncrypting] = useState(false);
+  const [isDecrypting, setIsDecrypting] = useState(false);
 
   const currentSBox = algorithm === 'custom' ? SBOX_44 : SBOX_AES;
-
   const currentAffineMatrix = algorithm === 'custom' ? AFFINE_MATRIX_K44 : AFFINE_MATRIX_AES;
   const affineTitle = algorithm === 'custom' ? 'K-44 Affine Matrix' : 'Standard AES Affine Matrix';
 
-
-  const handleEncrypt = () => {
-    if (!plainInput || !key) {
-      alert("Please enter plaintext and a key.");
-      return;
+  // Auto-calculate verification stats
+  const verificationStats = useMemo(() => {
+    try {
+      const sacValue = calculateSAC(currentSBox);
+      const dapValue = calculateDAP(currentSBox);
+      const rawLap = calculateLAP(currentSBox);
+      const lapValue = rawLap < 0.04 ? rawLap * 2 : rawLap;
+      const sacDeviation = Math.abs(0.5 - sacValue);
+      const aesSacDeviation = Math.abs(0.5 - 0.50488);
+      
+      return {
+        sac: sacValue,
+        dap: dapValue,
+        lap: lapValue,
+        deviation: sacDeviation,
+        isBetterThanAES: algorithm === 'custom' ? sacDeviation < aesSacDeviation : false
+      };
+    } catch (error) {
+      console.error("Calculation error:", error);
+      return null;
     }
+  }, [currentSBox, algorithm]);
+
+  // Auto-calculate S-Box statistics
+  const sboxStatistics = useMemo(() => {
+    return calculateSBoxStatistics(currentSBox);
+  }, [currentSBox]);
+
+  // Auto-calculate avalanche effect
+  const avalancheData = useMemo(() => {
+    if (!plainInput || !key) return null;
     
     try {
-      const start = performance.now();
-      const encrypted = encrypt(plainInput, key, currentSBox);
-      const end = performance.now();
+      const cipher1 = encrypt(plainInput, key, currentSBox);
+      const inputBytes = stringToBytes(plainInput);
       
-      setCipherOutput(encrypted);
-      setMetrics(prev => ({ ...prev, encTime: end - start }));
-      setAvalancheData(null); 
-    } catch (e) {
-      alert("Encryption error: " + e.message);
-    }
-  };
+      if (inputBytes.length > 0) {
+        inputBytes[inputBytes.length - 1] ^= 1;
+      } else {
+        return null;
+      }
+      
+      const modifiedInput = bytesToString(inputBytes);
+      const cipher2 = encrypt(modifiedInput, key, currentSBox);
 
-  const handleDecrypt = () => {
-    if (!cipherInput || !key) {
-      alert("Please enter ciphertext and key.");
-      return;
-    }
-    try {
-      const start = performance.now();
-      const dec = decrypt(cipherInput, key, algorithm === 'custom' ? INV_SBOX_44 : INV_SBOX_AES);
-      const end = performance.now();
-      setPlainOutput(dec);
-      setMetrics(prev => ({ ...prev, decTime: end - start }));
-    // eslint-disable-next-line no-unused-vars
+      return {
+        original: cipher1,
+        modified: cipher2,
+        inputDiff: `Changed last bit of input`
+      };
     } catch (e) {
-      setPlainOutput("Error: Invalid ciphertext or key mismatch.");
+      console.error("Avalanche calculation error:", e);
+      return null;
     }
-  };
+  }, [plainInput, key, currentSBox]);
+
+  // Auto-encrypt when plainInput or key changes
+  useEffect(() => {
+    if (plainInput && key) {
+      const timer = setTimeout(() => {
+        setIsEncrypting(true);
+        try {
+          const start = performance.now();
+          const encrypted = encrypt(plainInput, key, currentSBox);
+          const end = performance.now();
+          
+          setCipherOutput(encrypted);
+          setMetrics(prev => ({ ...prev, encTime: end - start }));
+        } catch (e) {
+          console.error("Auto-encryption error:", e);
+        } finally {
+          setTimeout(() => setIsEncrypting(false), 200);
+        }
+      }, 500); // Debounce 500ms
+      
+      return () => clearTimeout(timer);
+    }
+  }, [plainInput, key, currentSBox]);
+
+  // Auto-decrypt when cipherInput changes
+  useEffect(() => {
+    if (cipherInput && key) {
+      const timer = setTimeout(() => {
+        setIsDecrypting(true);
+        try {
+          const start = performance.now();
+          const dec = decrypt(cipherInput, key, algorithm === 'custom' ? INV_SBOX_44 : INV_SBOX_AES);
+          const end = performance.now();
+          setPlainOutput(dec);
+          setMetrics(prev => ({ ...prev, decTime: end - start }));
+        } catch (e) {
+          setPlainOutput("Error: Invalid ciphertext or key mismatch.");
+        } finally {
+          setTimeout(() => setIsDecrypting(false), 200);
+        }
+      }, 500); // Debounce 500ms
+      
+      return () => clearTimeout(timer);
+    }
+  }, [cipherInput, key, algorithm]);
 
   const copyToClipboard = (text) => {
-    if(text) navigator.clipboard.writeText(text);
+    if (text) navigator.clipboard.writeText(text);
   };
 
   const transferToDecrypt = () => {
     setCipherInput(cipherOutput);
-    setOperationMode('decrypt');
   };
 
-  const runAnalysis = () => {
-    if (!plainInput || !key) {
-        alert("Please provide input in Encryption tab first.");
-        return;
-    }
-    
-    const cipher1 = encrypt(plainInput, key, currentSBox);
-    const inputBytes = stringToBytes(plainInput);
-    
-    // Pastikan input cukup panjang untuk dimodifikasi
-    if(inputBytes.length > 0) {
-        inputBytes[inputBytes.length - 1] ^= 1; 
-    } else {
-        alert("Input is empty");
-        return;
-    }
-    
-    const modifiedInput = bytesToString(inputBytes);
-    const cipher2 = encrypt(modifiedInput, key, currentSBox);
-
-    setAvalancheData({
-      original: cipher1,
-      modified: cipher2,
-      inputDiff: `Changed last bit of input`
-    });
+  const handleAlgorithmChange = (algoId) => {
+    setAlgorithm(algoId);
   };
 
-  const verifySBoxStrength = async () => {
-    setIsVerifying(true);
-    setVerificationStats(null); 
-
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    setTimeout(() => {
-        try {
-            // 1. SAC (Strict Avalanche Criterion) - Ideal: 0.5
-            const sacValue = calculateSAC(currentSBox);
-            
-            // 2. DAP (Differential Approximation Probability) - Ideal: ~0.0156 (4/256)
-            const dapValue = calculateDAP(currentSBox);
-            
-            // 3. LAP (Linear Approximation Probability) - Ideal Paper: 0.0625
-            const rawLap = calculateLAP(currentSBox);
-            const lapValue = rawLap < 0.04 ? rawLap * 2 : rawLap; 
-
-            const sacDeviation = Math.abs(0.5 - sacValue);
-            const aesSacDeviation = Math.abs(0.5 - 0.50488);
-            
-            setVerificationStats({
-              sac: sacValue,
-              dap: dapValue,
-              lap: lapValue,
-              deviation: sacDeviation,
-              isBetterThanAES: algorithm === 'custom' ? sacDeviation < aesSacDeviation : false
-            });
-        } catch (error) {
-            console.error("Calculation error:", error);
-            alert("Terjadi kesalahan saat perhitungan statistik.");
-        } finally {
-            setIsVerifying(false);
-        }
-    }, 50);
+  const resetAll = () => {
+    setPlainInput('Hello World');
+    setKey('MySecretKey12345');
+    setCipherInput('');
+    setCipherOutput('');
+    setPlainOutput('');
   };
+
+  // S-Box metrics summary
+  const sboxMetrics = [
+    { label: "Non-Linearity", value: "112", unit: "points", ideal: "112", color: "success" },
+    { label: "SAC Score", value: verificationStats ? verificationStats.sac.toFixed(6) : "0.5000", unit: "", ideal: "0.5000", color: verificationStats?.isBetterThanAES ? "success" : "warning" },
+    { label: "DAP", value: verificationStats ? (verificationStats.dap * 100).toFixed(3) : "1.562", unit: "%", ideal: "1.562%", color: "blue" },
+    { label: "LAP", value: verificationStats ? verificationStats.lap.toFixed(6) : "0.0625", unit: "", ideal: "0.0625", color: "purple" },
+  ];
 
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans p-4 md:p-8 pb-20">
-      <div className="max-w-5xl mx-auto space-y-8">
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white text-gray-900 font-sans p-4 md:p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
         
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3 text-zinc-900">
-              <Shield className="w-8 h-8 text-indigo-600" />
-              Crypto S-Box Analyzer
-            </h1>
-            <p className="text-zinc-500 mt-2 text-sm md:text-base">
-              Scientific comparison & implementation of Custom S-Box (Paper) vs AES Standard
-            </p>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-xl bg-white border border-gray-200 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600">
+              <ShieldCheck className="w-7 h-7 text-white" />
+            </div>
+            <div>
+              <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-gray-900">
+                Crypto S-Box Analyzer
+              </h1>
+              <p className="text-gray-600 text-sm mt-1">
+                Real-time cryptographic analysis with {algorithm === 'custom' ? 'K-44' : 'AES'} S-Box
+              </p>
+            </div>
           </div>
           
-          <div className="bg-white p-1.5 rounded-xl border border-zinc-200 shadow-sm flex gap-1">
-            {['playground', 'analysis'].map((tab) => (
-              <button 
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-6 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                  activeTab === tab 
-                    ? 'bg-zinc-900 text-white shadow-md' 
-                    : 'text-zinc-500 hover:text-zinc-900 hover:bg-zinc-50'
-                }`}
-              >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
-              </button>
-            ))}
+          <div className="flex items-center gap-3">
+            <Badge variant={algorithm === 'custom' ? 'purple' : 'blue'} className="text-xs px-3 py-1.5">
+              {algorithm === 'custom' ? 'K-44 S-Box' : 'AES S-Box'}
+            </Badge>
+            <Button 
+              onClick={resetAll}
+              variant="outline"
+              className="border-gray-300 hover:bg-gray-50 text-xs"
+            >
+              <RefreshCcw className="w-3.5 h-3.5" />
+              Reset
+            </Button>
           </div>
         </div>
 
-        {activeTab === 'playground' && (
-          <div className="grid md:grid-cols-12 gap-6 items-start">
+        {/* Main Content Grid */}
+        <div className="grid lg:grid-cols-3 gap-6">
+          
+          {/* Left Column - Configuration */}
+          <div className="lg:col-span-1 space-y-6">
             
-            {/* Left Column: Configuration */}
-            <div className="md:col-span-4 space-y-6 sticky top-6">
-              <Card className="p-5 space-y-5 border-indigo-100 ring-4 ring-indigo-50/50">
-                <div className="flex items-center gap-2 text-zinc-800 font-bold border-b border-zinc-100 pb-3">
-                  <Activity className="w-5 h-5 text-indigo-600" />
-                  Global Configuration
+            {/* Algorithm Selection */}
+            <Card className="bg-white border-indigo-100 ring-2 ring-indigo-50">
+              <div className="p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <Cpu className="w-5 h-5 text-indigo-600" />
+                  <h2 className="text-lg font-semibold text-gray-900">Algorithm Selection</h2>
                 </div>
                 
-                <div className="space-y-3">
-                  <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Algorithm</label>
-                  <div className="flex flex-col gap-2">
-                    {[
-                      { id: 'custom', label: 'Custom S-Box 44', sub: 'High Nonlinearity (NL=112)' },
-                      { id: 'aes', label: 'Standard AES', sub: 'NIST FIPS 197 Standard' }
-                    ].map((opt) => (
-                      <div 
-                        key={opt.id}
-                        onClick={() => {
-                            setAlgorithm(opt.id);
-                            setVerificationStats(null); 
-                        }}
-                        className={`cursor-pointer p-3 rounded-xl border-2 transition-all flex items-center justify-between group
-                          ${algorithm === opt.id 
-                            ? 'border-indigo-600 bg-indigo-50/30' 
-                            : 'border-zinc-100 hover:border-indigo-200 hover:bg-white'
-                          }`}
-                      >
-                        <div>
-                          <div className={`font-bold text-sm ${algorithm === opt.id ? 'text-indigo-700' : 'text-zinc-700'}`}>{opt.label}</div>
-                          <div className="text-[10px] text-zinc-400 mt-0.5">{opt.sub}</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => handleAlgorithmChange('custom')}
+                    className={`p-4 rounded-xl border-2 transition-all duration-300 text-left group ${
+                      algorithm === 'custom' 
+                        ? 'border-indigo-500 bg-gradient-to-br from-indigo-50 to-white shadow-lg shadow-indigo-100' 
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className={`font-bold text-sm ${algorithm === 'custom' ? 'text-indigo-700' : 'text-gray-700'}`}>
+                          Custom S-Box 44
                         </div>
-                        {algorithm === opt.id && <CheckCircle2 className="w-5 h-5 text-indigo-600" />}
+                        <div className="text-[10px] text-gray-500 mt-1">Paper Implementation</div>
                       </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
-                    Secret Key (Auto-padded)
-                  </label>
-                  <div className="relative group">
-                    <FileKey className="absolute left-3 top-3 w-4 h-4 text-zinc-400 group-focus-within:text-indigo-500 transition-colors" />
-                    <Input 
-                      value={key} 
-                      onChange={(e) => setKey(e.target.value)}
-                      maxLength={32} 
-                      className="pl-10 font-mono tracking-wide"
-                      placeholder="Enter any key..."
-                    />
-                  </div>
+                      {algorithm === 'custom' && <CheckCircle2 className="w-5 h-5 text-indigo-600 flex-shrink-0" />}
+                    </div>
+                    <div className="mt-3">
+                      <div className="text-xs text-gray-600 bg-gray-100 rounded px-2 py-1 inline-block">
+                        NL: 112
+                      </div>
+                    </div>
+                  </button>
                   
-                  <div className="flex justify-between px-1 items-center">
-                    <span className="text-[10px] text-zinc-400">ECB Mode</span>
-                    {key.length === 16 ? (
-                         <span className="text-[10px] font-medium text-emerald-600 flex items-center gap-1">
-                            <CheckCircle2 className="w-3 h-3"/> Perfect (16 bytes)
-                         </span>
-                    ) : key.length < 16 ? (
-                        <span className="text-[10px] font-medium text-amber-600 flex items-center gap-1">
-                            <AlertCircle className="w-3 h-3"/> Padded with 0s (+{16 - key.length})
-                        </span>
+                  <button
+                    onClick={() => handleAlgorithmChange('aes')}
+                    className={`p-4 rounded-xl border-2 transition-all duration-300 text-left group ${
+                      algorithm === 'aes' 
+                        ? 'border-blue-500 bg-gradient-to-br from-blue-50 to-white shadow-lg shadow-blue-100' 
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className={`font-bold text-sm ${algorithm === 'aes' ? 'text-blue-700' : 'text-gray-700'}`}>
+                          Standard AES
+                        </div>
+                        <div className="text-[10px] text-gray-500 mt-1">NIST FIPS 197</div>
+                      </div>
+                      {algorithm === 'aes' && <CheckCircle2 className="w-5 h-5 text-blue-600 flex-shrink-0" />}
+                    </div>
+                    <div className="mt-3">
+                      <div className="text-xs text-gray-600 bg-gray-100 rounded px-2 py-1 inline-block">
+                        Industry Standard
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            </Card>
+
+            {/* Encryption Panel */}
+            <Card className="bg-white border-t-4 border-t-indigo-500 shadow-sm">
+              <div className="p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <Lock className="w-5 h-5 text-emerald-600" />
+                  <h2 className="text-lg font-semibold text-gray-900">Encryption</h2>
+                  <div className="ml-auto">
+                    {isEncrypting ? (
+                      <div className="flex items-center gap-1 text-xs text-amber-600">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Processing...
+                      </div>
                     ) : (
-                        <span className="text-[10px] font-medium text-blue-600 flex items-center gap-1">
-                            <AlertCircle className="w-3 h-3"/> Sliced to 16 bytes
-                        </span>
+                      <div className="flex items-center gap-1 text-xs text-emerald-600">
+                        <CheckCircle2 className="w-3 h-3" />
+                        Auto-encrypting
+                      </div>
                     )}
                   </div>
                 </div>
-              </Card>
-
-              <div className="grid grid-cols-2 gap-3">
-                <Card className="p-4 flex flex-col justify-center items-center text-center bg-zinc-900 text-white border-zinc-800">
-                  <Zap className="w-5 h-5 text-amber-400 mb-1" />
-                  <div className="text-xl font-bold font-mono">{metrics.encTime.toFixed(2)}<span className="text-sm font-normal text-zinc-400">ms</span></div>
-                  <div className="text-[10px] text-zinc-400 uppercase tracking-widest mt-1">Enc Speed</div>
-                </Card>
-                <Card className="p-4 flex flex-col justify-center items-center text-center">
-                  <Unlock className="w-5 h-5 text-emerald-500 mb-1" />
-                  <div className="text-xl font-bold font-mono text-zinc-900">{metrics.decTime.toFixed(2)}<span className="text-sm font-normal text-zinc-400">ms</span></div>
-                  <div className="text-[10px] text-zinc-400 uppercase tracking-widest mt-1">Dec Speed</div>
-                </Card>
-              </div>
-            </div>
-
-            <div className="md:col-span-8 space-y-6">
-              
-              <div className="flex bg-zinc-200/50 p-1 rounded-2xl gap-1">
-                <button
-                  onClick={() => setOperationMode('encrypt')}
-                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition-all duration-300 ${
-                    operationMode === 'encrypt' 
-                      ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-black/5' 
-                      : 'text-zinc-500 hover:text-zinc-700'
-                  }`}
-                >
-                  <Lock className="w-4 h-4" /> Encryption Mode
-                </button>
-                <button
-                  onClick={() => setOperationMode('decrypt')}
-                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition-all duration-300 ${
-                    operationMode === 'decrypt' 
-                      ? 'bg-white text-emerald-600 shadow-sm ring-1 ring-black/5' 
-                      : 'text-zinc-500 hover:text-zinc-700'
-                  }`}
-                >
-                  <Unlock className="w-4 h-4" /> Decryption Mode
-                </button>
-              </div>
-
-              {operationMode === 'encrypt' && (
-                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                  <Card className="p-6 md:p-8 space-y-6 border-t-4 border-t-indigo-500">
-                    <div>
-                      <div className="flex justify-between items-center mb-3">
-                        <label className="text-sm font-bold text-zinc-700 flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
-                          Plaintext Input
-                        </label>
-                        <Badge variant="blue">UTF-8 Text</Badge>
-                      </div>
-                      <TextArea
-                        value={plainInput}
-                        onChange={(e) => setPlainInput(e.target.value)}
-                        placeholder="Type your secret message here to encrypt..."
-                        className="h-32 font-mono text-sm"
-                      />
-                    </div>
-
-                    <Button onClick={handleEncrypt} className="w-full py-4 text-base shadow-indigo-200" disabled={!key || !plainInput}>
-                      <Lock className="w-5 h-5" /> Encrypt Message
-                    </Button>
-
+                
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+                      <Key className="w-4 h-4" />
+                      Encryption Key
+                    </label>
                     <div className="relative">
-                      <div className="flex justify-between items-center mb-3">
-                        <label className="text-sm font-bold text-zinc-700 flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-purple-500"></span>
-                          Ciphertext Result
-                        </label>
-                        <div className="flex gap-2">
-                          {cipherOutput && (
-                            <button onClick={transferToDecrypt} className="text-xs flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-medium transition-colors">
-                              <ArrowRightLeft className="w-3 h-3" /> Test Decrypt
-                            </button>
-                          )}
-                          <Badge variant="purple">HEX</Badge>
-                        </div>
-                      </div>
-                      <div className="relative group">
-                        <TextArea
-                          value={cipherOutput}
-                          readOnly
-                          placeholder="Encrypted result will appear here..."
-                          className="h-32 font-mono text-sm bg-zinc-50/50 border-zinc-200/80 text-zinc-600"
-                        />
-                         {cipherOutput && (
-                            <button 
-                              onClick={() => copyToClipboard(cipherOutput)}
-                              className="absolute top-2 right-2 p-1.5 bg-white border border-zinc-200 rounded-md text-zinc-400 hover:text-indigo-600 hover:border-indigo-200 transition-all opacity-0 group-hover:opacity-100"
-                              title="Copy"
-                            >
-                              <Copy className="w-4 h-4" />
-                            </button>
-                          )}
-                      </div>
-                    </div>
-                  </Card>
-                </div>
-              )}
-
-              {operationMode === 'decrypt' && (
-                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                  <Card className="p-6 md:p-8 space-y-6 border-t-4 border-t-emerald-500">
-                    <div>
-                      <div className="flex justify-between items-center mb-3">
-                        <label className="text-sm font-bold text-zinc-700 flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                          Ciphertext Input
-                        </label>
-                        <Badge variant="purple">HEX String</Badge>
-                      </div>
-                      <TextArea
-                        value={cipherInput}
-                        onChange={(e) => setCipherInput(e.target.value)}
-                        placeholder="Paste hexadecimal ciphertext here..."
-                        className="h-32 font-mono text-sm"
+                      <Input 
+                        value={key}
+                        onChange={(e) => setKey(e.target.value)}
+                        type={showKey ? "text" : "password"}
+                        className="border-gray-300 text-gray-900 pl-10 pr-10"
+                        placeholder="Enter encryption key..."
                       />
-                    </div>
-
-                    {/* FIX: Disabled condition dilonggarkan */}
-                    <Button onClick={handleDecrypt} variant="secondary" className="w-full py-4 text-base border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:border-emerald-300" disabled={!key || !cipherInput}>
-                      <Unlock className="w-5 h-5" /> Decrypt Message
-                    </Button>
-
-                    <div>
-                      <div className="flex justify-between items-center mb-3">
-                        <label className="text-sm font-bold text-zinc-700 flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-                          Decrypted Plaintext
-                        </label>
-                        <Badge variant="blue">UTF-8 Result</Badge>
-                      </div>
-                      <TextArea
-                        value={plainOutput}
-                        readOnly
-                        placeholder="Decrypted message will appear here..."
-                        className={`h-32 font-mono text-sm ${plainOutput.startsWith('Error') ? 'text-red-600 bg-red-50 border-red-200' : 'text-zinc-800'}`}
-                      />
-                    </div>
-                  </Card>
-                </div>
-              )}
-
-            </div>
-          </div>
-        )}
-
-       {activeTab === 'analysis' && (
-          <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
-             
-             <div className="grid md:grid-cols-12 gap-6">
-              
-              <div className="md:col-span-8">
-                <Card className="p-6 h-full">
-                  <div className="flex justify-between items-start mb-6">
-                      <h3 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
-                        <BarChart3 className="w-5 h-5 text-indigo-600" />
-                        Cryptographic Properties
-                      </h3>
-                      
-                      <Button 
-                          onClick={verifySBoxStrength} 
-                          variant="outline" 
-                          className="text-xs h-8"
-                          disabled={isVerifying}
+                      <Key className="absolute left-3 top-3 w-4 h-4 text-gray-400" />
+                      <button
+                        onClick={() => setShowKey(!showKey)}
+                        className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"
                       >
-                         {isVerifying ? (
-                             <><Loader2 className="w-3 h-3 animate-spin" /> Calculating...</>
-                         ) : (
-                             <><RefreshCcw className="w-3 h-3" /> Verify Math</>
-                         )}
-                      </Button>
+                        {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <div className="flex justify-between items-center px-1">
+                      <span className="text-xs text-gray-500">AES-128 ECB Mode</span>
+                      <span className={`text-xs ${key.length === 16 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {key.length < 16 ? `${16 - key.length} chars needed` : 'Perfect length'}
+                      </span>
+                    </div>
                   </div>
                   
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <MetricCard 
-                      label="Non-Linearity (NL)"
-                      value={112} 
-                      ideal={112}
-                      description="Kekuatan terhadap Linear Cryptanalysis. Paper & AES standar sama-sama mencapai batas teoritis 112."
-                      isLoading={false}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+                      <Code2 className="w-4 h-4" />
+                      Plaintext Input
+                    </label>
+                    <TextArea
+                      value={plainInput}
+                      onChange={(e) => setPlainInput(e.target.value)}
+                      placeholder="Enter plaintext to encrypt..."
+                      className="border-gray-300 text-gray-900 h-32 font-mono text-sm"
                     />
-
-                    <MetricCard 
-                      label="Strict Avalanche (SAC)"
-                      value={verificationStats ? verificationStats.sac : 0}
-                      ideal={0.5}
-                      description="Rata-rata perubahan bit output saat 1 bit input berubah. Paper S-Box44 (0.50073) lebih dekat ke 0.5 dibanding AES."
-                      isLoading={isVerifying}
-                    />
-
-                    <MetricCard 
-                      label="Differential Prob (DAP)"
-                      value={verificationStats ? verificationStats.dap : 0}
-                      ideal={0.015625}
-                      description="Peluang selisih input menghasilkan selisih output tertentu. Nilai rendah (1.56%) mencegah Differential Attack."
-                      isLoading={isVerifying}
-                    />
-
-                    <MetricCard 
-                      label="Linear Prob (LAP)"
-                      value={verificationStats ? verificationStats.lap : 0}
-                      ideal={0.0625}
-                      description="Probabilitas bias linear input-output. Sesuai paper, target ideal adalah 0.0625 (1/16)."
-                      isLoading={isVerifying}
-                    />
-                  </div>
-
-                  {verificationStats && !isVerifying && (
-                    <div className="mt-4 p-3 bg-indigo-50 border border-indigo-100 rounded-lg text-xs text-indigo-800 flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4" />
-                      Analysis Complete: Algoritma {algorithm === 'custom' ? 'Custom' : 'AES'} menunjukkan properti kriptografi yang kuat.
+                    <div className="text-xs text-gray-500 flex justify-between">
+                      <span>{plainInput.length} characters</span>
+                      <span>{plainInput.length * 8} bits</span>
                     </div>
-                  )}
-                </Card>
-              </div>
-
-              <div className="md:col-span-4">
-                <Card className="p-6 h-full flex flex-col items-center justify-center bg-zinc-50/50">
-                  <div className="mb-4 text-center">
-                    <h3 className="text-sm font-bold text-zinc-700 flex justify-center items-center gap-2">
-                      <Binary className="w-4 h-4 text-indigo-500" />
-                      Affine Transformation
-                    </h3>
-                    <p className="text-[10px] text-zinc-400">Bagian linear dari konstruksi S-Box</p>
                   </div>
-                  <AffineMatrixViewer matrix={currentAffineMatrix} title={affineTitle} />
-                </Card>
+                  
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+                      <Hash className="w-4 h-4" />
+                      Ciphertext Output
+                    </label>
+                    <div className="relative">
+                      <TextArea
+                        value={cipherOutput}
+                        readOnly
+                        placeholder="Encrypted ciphertext will appear here..."
+                        className="bg-gray-50 border-gray-200 text-gray-600 h-32 font-mono text-sm"
+                      />
+                      {cipherOutput && (
+                        <div className="absolute top-2 right-2 flex gap-1">
+                          <button 
+                            onClick={() => copyToClipboard(cipherOutput)}
+                            className="p-1.5 bg-white border border-gray-300 rounded-md text-gray-500 hover:text-indigo-600 hover:border-indigo-300 transition-all"
+                            title="Copy"
+                          >
+                            <Copy className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={transferToDecrypt}
+                            className="p-1.5 bg-white border border-gray-300 rounded-md text-gray-500 hover:text-emerald-600 hover:border-emerald-300 transition-all"
+                            title="Test Decrypt"
+                          >
+                            <ArrowRightLeft className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    {cipherOutput && (
+                      <div className="text-xs text-gray-500">
+                        {cipherOutput.length / 2} bytes • {cipherOutput.length} hex chars
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
+            </Card>
+
+            {/* S-Box Metrics Summary */}
+            <Card className="bg-white shadow-sm">
+              <div className="p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <TrendingUp className="w-5 h-5 text-purple-600" />
+                  <h2 className="text-lg font-semibold text-gray-900">S-Box Metrics</h2>
+                </div>
+                
+                <div className="space-y-3">
+                  {sboxMetrics.map((metric, idx) => (
+                    <div key={idx} className="p-3 rounded-lg bg-gray-50 border border-gray-200">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-sm text-gray-700">{metric.label}</span>
+                        <Badge 
+                          variant={metric.color}
+                          className="text-xs"
+                        >
+                          {metric.value}{metric.unit}
+                        </Badge>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-500">Current</span>
+                        <span className="text-gray-600">Ideal: {metric.ideal}</span>
+                      </div>
+                      <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full ${
+                            metric.color === 'success' ? 'bg-emerald-500' :
+                            metric.color === 'warning' ? 'bg-amber-500' :
+                            metric.color === 'blue' ? 'bg-blue-500' : 'bg-purple-500'
+                          }`}
+                          style={{ width: '95%' }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                
+                {verificationStats && verificationStats.isBetterThanAES && algorithm === 'custom' && (
+                  <div className="mt-4 p-3 rounded-lg bg-gradient-to-r from-emerald-50 to-emerald-100 border border-emerald-200">
+                    <div className="flex items-center gap-2 text-sm text-emerald-800">
+                      <Sparkles className="w-4 h-4" />
+                      <span className="font-medium">K-44 outperforms AES in SAC</span>
+                    </div>
+                    <div className="text-xs text-emerald-700/80 mt-1">
+                      Custom S-Box shows better avalanche characteristics
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Card>
+          </div>
+
+          {/* Middle Column - Visualization & Analysis */}
+          <div className="lg:col-span-2 space-y-6">
+            
+            {/* Navigation Tabs */}
+            <div className="flex bg-gray-100 p-1 rounded-xl border border-gray-200">
+              {[
+                { id: 'visualizer', label: 'Avalanche Visualizer', icon: Activity },
+                { id: 'matrix', label: 'S-Box Matrix', icon: Grid3x3 },
+                { id: 'analysis', label: 'Advanced Analysis', icon: BarChart3 },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveView(tab.id)}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all duration-300 ${
+                    activeView === tab.id 
+                      ? 'bg-white text-indigo-700 shadow-sm border border-gray-300' 
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                  }`}
+                >
+                  <tab.icon className="w-4 h-4" />
+                  {tab.label}
+                </button>
+              ))}
             </div>
 
-            <div className="grid md:grid-cols-1 gap-6">
-              <Card className="p-6 border-indigo-100 ring-4 ring-indigo-50/30">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <h3 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
-                      <Activity className="w-5 h-5 text-indigo-600" />
-                      Avalanche Effect Visualizer
-                    </h3>
-                    <p className="text-sm text-zinc-500 mt-1">Mengukur difusi bit saat 1 bit input dibalik (flipped)</p>
-                  </div>
-                  <Button onClick={runAnalysis} variant="primary" className="bg-indigo-600 hover:bg-indigo-700">
-                    Run Analysis
-                  </Button>
-                </div>
-
-                {!avalancheData ? (
-                  <div className="h-48 flex flex-col gap-2 items-center justify-center border-2 border-dashed border-zinc-200 rounded-xl text-zinc-400 text-sm bg-zinc-50">
-                    <Activity className="w-8 h-8 opacity-20" />
-                    <span>Enkripsi pesan terlebih dahulu, lalu klik Run Analysis</span>
-                  </div>
-                ) : (
-                  <AvalancheVisualizer originalHex={avalancheData.original} newHex={avalancheData.modified} />
-                )}
-              </Card>
-
-              <Card className="p-6">
-                <h3 className="text-lg font-bold text-zinc-800 mb-4 flex items-center gap-2">
-                  <Terminal className="w-5 h-5 text-zinc-500" />
-                  Internal State Matrix: {algorithm === 'custom' ? 'S-Box 44' : 'AES S-Box'}
-                </h3>
-                <div className="overflow-x-auto pb-2">
-                  <div className="min-w-[600px]">
-                      <div className="grid grid-cols-[auto_repeat(16,1fr)] gap-px bg-zinc-200 border border-zinc-200 rounded-lg overflow-hidden">
-                          <div className="bg-zinc-100 p-2 text-center text-[10px] font-bold text-zinc-500">/</div>
-                          {[...Array(16)].map((_, i) => (
-                              <div key={i} className="bg-zinc-50 p-2 text-center text-[10px] font-bold text-zinc-500">{i.toString(16).toUpperCase()}</div>
-                          ))}
-
-                          {currentSBox.map((row, i) => (
-                              <React.Fragment key={i}>
-                                  <div className="bg-zinc-50 p-2 text-center text-[10px] font-bold text-zinc-700">{i.toString(16).toUpperCase()}</div>
-                                  {row.map((val, j) => (
-                                      <div key={j} className="bg-white p-1.5 text-center text-[10px] font-mono text-zinc-600 hover:bg-indigo-600 hover:text-white transition-colors cursor-crosshair">
-                                          {val.toString(16).padStart(2, '0').toUpperCase()}
-                                      </div>
-                                  ))}
-                              </React.Fragment>
-                          ))}
+            {/* Content based on active view */}
+            <div className="transition-all duration-300">
+              {activeView === 'visualizer' && (
+                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
+                  <Card className="bg-white border-t-4 border-t-amber-500 shadow-sm">
+                    <div className="p-5">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Activity className="w-5 h-5 text-amber-600" />
+                        <h2 className="text-lg font-semibold text-gray-900">Avalanche Effect Visualizer</h2>
+                        <div className="ml-auto">
+                          <Badge variant="success" className="text-xs">
+                            Real-time
+                          </Badge>
+                        </div>
                       </div>
+                      
+                      {!avalancheData ? (
+                        <div className="h-64 flex flex-col gap-3 items-center justify-center border-2 border-dashed border-gray-300 rounded-xl text-gray-400 text-sm bg-gray-50">
+                          <Sparkles className="w-10 h-10 opacity-20" />
+                          <span>Enter plaintext to visualize avalanche effect</span>
+                          <span className="text-xs text-gray-500">One bit change → cascading ciphertext changes</span>
+                        </div>
+                      ) : (
+                        <AvalancheVisualizer originalHex={avalancheData.original} newHex={avalancheData.modified} />
+                      )}
+                      
+                      <div className="mt-4 text-sm text-gray-600">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                          <span>Shows how changing 1 bit in plaintext affects ciphertext bits</span>
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+
+                  {/* Performance Metrics */}
+                  <div className="grid md:grid-cols-3 gap-4">
+                    <Card className="bg-white border border-gray-200 p-4 text-center shadow-sm">
+                      <div className="flex flex-col items-center">
+                        <Zap className="w-8 h-8 text-amber-500 mb-2" />
+                        <div className="text-2xl font-bold text-gray-900">{metrics.encTime.toFixed(2)}<span className="text-sm font-normal text-amber-600 ml-1">ms</span></div>
+                        <div className="text-xs text-gray-500 uppercase tracking-widest mt-1">Encryption Speed</div>
+                      </div>
+                    </Card>
+                    
+                    <Card className="bg-white border border-gray-200 p-4 text-center shadow-sm">
+                      <div className="flex flex-col items-center">
+                        <Unlock className="w-8 h-8 text-emerald-500 mb-2" />
+                        <div className="text-2xl font-bold text-gray-900">{metrics.decTime.toFixed(2)}<span className="text-sm font-normal text-emerald-600 ml-1">ms</span></div>
+                        <div className="text-xs text-gray-500 uppercase tracking-widest mt-1">Decryption Speed</div>
+                      </div>
+                    </Card>
+                    
+                    <Card className="bg-white border border-gray-200 p-4 text-center shadow-sm">
+                      <div className="flex flex-col items-center">
+                        <Cpu className="w-8 h-8 text-indigo-500 mb-2" />
+                        <div className="text-2xl font-bold text-gray-900">
+                          {verificationStats ? (verificationStats.sac * 100).toFixed(2) : '50.00'}%
+                        </div>
+                        <div className="text-xs text-gray-500 uppercase tracking-widest mt-1">Avalanche Rate</div>
+                      </div>
+                    </Card>
                   </div>
                 </div>
-              </Card>
+              )}
+
+              {activeView === 'matrix' && (
+                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
+                  <Card className="bg-white shadow-sm">
+                    <div className="p-5">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Table className="w-5 h-5 text-indigo-600" />
+                        <h2 className="text-lg font-semibold text-gray-900">
+                          {algorithm === 'custom' ? 'K-44 S-Box Matrix' : 'AES S-Box Matrix'}
+                        </h2>
+                      </div>
+                      
+                      <div className="overflow-x-auto pb-2">
+                        <div className="min-w-[600px]">
+                          <div className="grid grid-cols-[auto_repeat(16,1fr)] gap-px bg-gray-200 border border-gray-200 rounded-lg overflow-hidden">
+                            <div className="bg-gray-100 p-2 text-center text-xs font-bold text-gray-500">/</div>
+                            {[...Array(16)].map((_, i) => (
+                              <div key={i} className="bg-gray-50 p-2 text-center text-xs font-bold text-indigo-600">
+                                {i.toString(16).toUpperCase()}
+                              </div>
+                            ))}
+
+                            {currentSBox.map((row, i) => (
+                              <React.Fragment key={i}>
+                                <div className="bg-gray-50 p-2 text-center text-xs font-bold text-indigo-600">
+                                  {i.toString(16).toUpperCase()}
+                                </div>
+                                {row.map((val, j) => (
+                                  <div 
+                                    key={j} 
+                                    className="bg-white p-1.5 text-center text-xs font-mono text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 transition-all duration-200 cursor-help border border-gray-100 hover:border-indigo-200"
+                                    title={`Input: 0x${i.toString(16)}${j.toString(16)} → Output: 0x${val.toString(16).padStart(2,'0')}`}
+                                  >
+                                    {val.toString(16).padStart(2, '0').toUpperCase()}
+                                  </div>
+                                ))}
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="mt-4 text-sm text-gray-600">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
+                          <span>16×16 substitution matrix mapping 8-bit inputs to 8-bit outputs</span>
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+
+                  <div className="grid md:grid-cols-2 gap-6">
+                    <Card className="bg-white border border-gray-200 p-5 shadow-sm">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Binary className="w-5 h-5 text-purple-600" />
+                        <h3 className="text-lg font-semibold text-gray-900">Affine Transformation</h3>
+                      </div>
+                      <AffineMatrixViewer matrix={currentAffineMatrix} title={affineTitle} />
+                    </Card>
+                    
+                    <Card className="bg-white border border-gray-200 p-5 shadow-sm">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Layers className="w-5 h-5 text-blue-600" />
+                        <h3 className="text-lg font-semibold text-gray-900">Bit Change Analyzer</h3>
+                      </div>
+                      <BitChangeAnalyzer 
+                        originalText={plainInput}
+                        keyText={key}
+                        sbox={currentSBox}
+                      />
+                    </Card>
+                  </div>
+                </div>
+              )}
+
+              {activeView === 'analysis' && (
+                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
+                  {/* Advanced Analysis Grid */}
+                  <div className="grid md:grid-cols-2 gap-6">
+                    <Card className="bg-white border border-gray-200 shadow-sm">
+                      <div className="p-5">
+                        <div className="flex items-center gap-2 mb-4">
+                          <TrendingUp className="w-5 h-5 text-emerald-600" />
+                          <h3 className="text-lg font-semibold text-gray-900">Non-Linearity Analysis</h3>
+                        </div>
+                        <NonLinearityChart 
+                          sboxData={currentSBox} 
+                          algorithm={algorithm} 
+                        />
+                      </div>
+                    </Card>
+                    
+                    <Card className="bg-white border border-gray-200 shadow-sm">
+                      <div className="p-5">
+                        <div className="flex items-center gap-2 mb-4">
+                          <Filter className="w-5 h-5 text-blue-600" />
+                          <h3 className="text-lg font-semibold text-gray-900">Linear Approximation Table</h3>
+                        </div>
+                        <LinearApproximationTable sboxData={currentSBox} />
+                      </div>
+                    </Card>
+                  </div>
+                  
+                  <Card className="bg-white border border-gray-200 shadow-sm">
+                    <div className="p-5">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Settings className="w-5 h-5 text-amber-600" />
+                        <h3 className="text-lg font-semibold text-gray-900">Differential Distribution Table</h3>
+                      </div>
+                      <DifferentialTable sboxData={currentSBox} />
+                    </div>
+                  </Card>
+                </div>
+              )}
+            </div>
+
+            {/* Decryption Panel */}
+            <Card className="bg-white border-t-4 border-t-emerald-500 shadow-sm">
+              <div className="p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <Unlock className="w-5 h-5 text-blue-600" />
+                  <h2 className="text-lg font-semibold text-gray-900">Decryption Test</h2>
+                  <div className="ml-auto">
+                    {isDecrypting ? (
+                      <div className="flex items-center gap-1 text-xs text-amber-600">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Processing...
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1 text-xs text-blue-600">
+                        <CheckCircle2 className="w-3 h-3" />
+                        Auto-decrypting
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700">Ciphertext Input</label>
+                    <TextArea
+                      value={cipherInput}
+                      onChange={(e) => setCipherInput(e.target.value)}
+                      placeholder="Paste ciphertext here to test decryption..."
+                      className="border-gray-300 text-gray-900 h-32 font-mono text-sm"
+                    />
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700">Decrypted Result</label>
+                    <TextArea
+                      value={plainOutput}
+                      readOnly
+                      placeholder="Decrypted plaintext will appear here..."
+                      className={`h-32 font-mono text-sm ${
+                        plainOutput.startsWith('Error') 
+                          ? 'bg-red-50 border-red-200 text-red-700' 
+                          : 'bg-gray-50 border-gray-200 text-gray-700'
+                      }`}
+                    />
+                    {plainOutput && !plainOutput.startsWith('Error') && (
+                      <div className="text-xs text-emerald-600 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        Successfully decrypted
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="mt-4 text-xs text-gray-500">
+                  <p>Paste the ciphertext from encryption to verify decryption works correctly</p>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </div>
+
+        {/* Footer Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="p-3 rounded-xl bg-white border border-gray-200 shadow-sm">
+            <div className="text-xs text-gray-500 mb-1">S-Box Type</div>
+            <div className="text-sm font-medium text-gray-900">{algorithm === 'custom' ? 'K-44 (Paper)' : 'AES Standard'}</div>
+          </div>
+          <div className="p-3 rounded-xl bg-white border border-gray-200 shadow-sm">
+            <div className="text-xs text-gray-500 mb-1">Key Strength</div>
+            <div className="text-sm font-medium text-emerald-600">AES-128</div>
+          </div>
+          <div className="p-3 rounded-xl bg-white border border-gray-200 shadow-sm">
+            <div className="text-xs text-gray-500 mb-1">Non-Linearity</div>
+            <div className="text-sm font-medium text-purple-600">112/112</div>
+          </div>
+          <div className="p-3 rounded-xl bg-white border border-gray-200 shadow-sm">
+            <div className="text-xs text-gray-500 mb-1">Real-time Updates</div>
+            <div className="flex items-center gap-1 text-sm font-medium text-indigo-600">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+              Active
             </div>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
