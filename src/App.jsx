@@ -31,10 +31,10 @@ import ComparisonTable from './components/ComparisonTable'; // <-- Fitur Side-by
 const App = () => {
   // --- KONFIGURASI TIM ---
   const teamMembers = [
-    { name: "Nama Anggota 1", role: "Researcher" },
-    { name: "Nama Anggota 2", role: "Developer" },
-    { name: "Nama Anggota 3", role: "Analyst" },
-    { name: "Nama Anggota 4", role: "UI/UX" },
+    { name: "Rafi Algihari", role: "Dev" },
+    { name: "Yudistira Imam Putra", role: "Dev" },
+    { name: "Yefta Yudistira Dio Lewaherilla", role: "Dev" },
+    { name: "Wijdan Miftahul Huda", role: "Dev" },
   ];
 
   // --- GLOBAL STATE ---
