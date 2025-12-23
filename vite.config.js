@@ -8,9 +8,6 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
-<<<<<<< HEAD
+  // Gunakan '/' agar path file JS dan CSS terbaca dengan benar oleh Netlify
+  base: '/', 
 })
-=======
-  base: "./"
-})
->>>>>>> 0da700b3f9cbe0dfd27ea7347efce03df08594d4
