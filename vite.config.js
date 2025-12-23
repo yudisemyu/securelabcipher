@@ -8,4 +8,9 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+<<<<<<< HEAD
 })
+=======
+  base: "./"
+})
+>>>>>>> 0da700b3f9cbe0dfd27ea7347efce03df08594d4
